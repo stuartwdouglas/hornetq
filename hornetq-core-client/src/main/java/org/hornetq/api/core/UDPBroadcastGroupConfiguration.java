@@ -21,7 +21,11 @@ import java.net.Inet4Address;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.MulticastSocket;
+import java.net.SocketAddress;
 import java.net.UnknownHostException;
+import java.nio.ByteBuffer;
+import java.nio.channels.DatagramChannel;
+import java.nio.channels.Selector;
 import java.util.concurrent.TimeUnit;
 
 import org.hornetq.core.client.HornetQClientLogger;
@@ -111,9 +115,11 @@ public final class UDPBroadcastGroupConfiguration implements BroadcastEndpointFa
 
       private DatagramSocket broadcastingSocket;
 
-      private MulticastSocket receivingSocket;
+      private DatagramChannel receivingSocket;
 
       private volatile boolean open;
+
+      private Selector selector;
 
       public UDPBroadcastEndpoint(final InetAddress groupAddress,
                                   final int groupPort,
@@ -136,13 +142,15 @@ public final class UDPBroadcastGroupConfiguration implements BroadcastEndpointFa
       public byte[] receiveBroadcast() throws Exception
       {
          final byte[] data = new byte[65535];
-         final DatagramPacket packet = new DatagramPacket(data, data.length);
-
          while (open)
          {
             try
             {
-               receivingSocket.receive(packet);
+               selector.select();
+               SocketAddress res = receivingSocket.receive(ByteBuffer.wrap(data));
+               if (res == null) {
+                  continue;
+               }
             }
             // TODO: Do we need this?
             catch (InterruptedIOException e)
@@ -188,33 +196,8 @@ public final class UDPBroadcastGroupConfiguration implements BroadcastEndpointFa
 
       public void openClient() throws Exception
       {
-         // HORNETQ-874
-         if (checkForLinux() || checkForSolaris() || checkForHp())
-         {
-            try
-            {
-               receivingSocket = new MulticastSocket(new InetSocketAddress(groupAddress, groupPort));
-            }
-            catch (IOException e)
-            {
-               HornetQClientLogger.LOGGER.ioDiscoveryError(groupAddress.getHostAddress(), groupAddress instanceof Inet4Address ? "IPv4" : "IPv6");
-
-               receivingSocket = new MulticastSocket(groupPort);
-            }
-         }
-         else
-         {
-            receivingSocket = new MulticastSocket(groupPort);
-         }
-
-         if (localAddress != null)
-         {
-            receivingSocket.setInterface(localAddress);
-         }
-
-         receivingSocket.joinGroup(groupAddress);
-
-         receivingSocket.setSoTimeout(SOCKET_TIMEOUT);
+         receivingSocket = DatagramChannel.open();
+         receivingSocket.connect(new InetSocketAddress(groupAddress, groupPort));
 
          open = true;
       }
@@ -232,6 +215,11 @@ public final class UDPBroadcastGroupConfiguration implements BroadcastEndpointFa
          if (receivingSocket != null)
          {
             receivingSocket.close();
+         }
+
+         if (selector != null) {
+            selector.wakeup();
+            selector.close();
          }
       }
 
