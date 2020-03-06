@@ -210,8 +210,8 @@ public class BroadcastGroupImpl implements BroadcastGroup, Runnable
       {
          tcConfig.encode(buff);
       }
-
-      byte[] data = buff.toByteBuffer().array();
+      byte[] data = new byte[buff.readableBytes()];
+      buff.readBytes(data);
 
       endpoint.broadcast(data);
    }
